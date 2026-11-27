@@ -4,8 +4,10 @@ import os
 import re
 import secrets
 import shutil
+import ssl
 import subprocess
 import time
+from urllib.error import URLError
 from urllib.parse import urlencode
 
 LOCAL_CALLBACK = 'http://127.0.0.1:8765/oauth/callback'
@@ -162,8 +164,23 @@ class Session:
     def hosted(self):
         if not self.domain or not self.public:
             raise Problem('Load the local public key and set its domain first.')
-        with self.http.open('https://' + self.domain + KEY_PATH, timeout=15) as r:
-            hosted = r.read(8193)
+        url = 'https://' + self.domain + KEY_PATH
+        try:
+            with self.http.open(url, timeout=15) as r:
+                hosted = r.read(8193)
+        except URLError as err:
+            if os.name != 'nt' or not isinstance(err.reason, ssl.SSLCertVerificationError):
+                raise
+            curl = os.path.join(os.environ['SystemRoot'], 'System32', 'curl.exe')
+            result = subprocess.run(
+                [curl, '--disable', '--silent', '--show-error', '--fail', '--max-filesize', '8192',
+                 '--max-time', '15', '--write-out', '\\n%{http_code}', url],
+                capture_output=True, timeout=17)
+            if result.returncode:
+                raise Problem(result.stderr.decode(errors='replace').strip() or 'Windows HTTPS check failed.')
+            hosted, _, status = result.stdout.rpartition(b'\n')
+            if status != b'200':
+                raise Problem(f'Public key endpoint returned HTTP {status.decode(errors="replace")}.')
         if len(hosted) > 8192 or public_bytes(hosted.decode('ascii')) != public_bytes(self.public):
             raise Problem('Hosted key differs from the local public key.')
         self.checks[KEY] = 'Hosted key matches'
