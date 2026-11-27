@@ -1,0 +1,12 @@
+﻿<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Power House sign-in</title></head><body>
+<p id="status">Returning to Power House on this computer…</p>
+<script>
+const query=new URLSearchParams(location.search);
+history.replaceState(null,'',location.pathname);
+const dest=new URL('http://127.0.0.1:8765/oauth/callback');
+for(const name of ['state','code','error','error_description']){
+  for(const value of query.getAll(name))dest.searchParams.append(name,value);
+}
+if(query.has('state'))location.replace(dest.href);
+else document.getElementById('status').textContent='Start sign-in from Power House on your computer.';
+</script></body></html>

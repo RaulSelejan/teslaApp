@@ -1,0 +1,35 @@
+# Power House v0.2
+
+## Run locally
+
+From this directory in PowerShell run `python power_house.py`. Leave the terminal open during sign-in. Power House opens `http://127.0.0.1:8765/`. Stop it with Ctrl+C. The fixed loopback port is part of the redirect URI. Python uses its standard library. Key generation uses OpenSSL on PATH or the copy in Git for Windows, which is installed on this machine.
+
+## One-time Tesla setup
+
+1. Choose a public HTTPS hostname you control. If you already have a static site, its root can host the key. A free option is a GitHub Pages user site. Create a **separate public repository** named exactly `YOUR-USERNAME.github.io`, initialize it with a README and enable **Settings → Pages → Deploy from a branch → main → / (root) → Save**. If you already use this site, add the files to its existing publishing source. The hostname in the following steps is your actual lowercase GitHub username followed by `.github.io`. [GitHub Pages quickstart](https://docs.github.com/en/pages/quickstart)
+2. In Power House, expand **Application registration**. If you generated a pair in Git Bash, enter the hostname, select ~/public-key.pem under **Existing OpenSSL public key**, and click **Use existing public key**. Continue to step 3. To generate a new pair in Power House, enter that hostname and a unique local passphrase of at least 12 characters. Click **Generate or open key pair**. Save the passphrase in your password manager. Power House uses OpenSSL P-256 and saves the encrypted private key locally in `.power-house/private.pem`. Keep an encrypted backup. Opening this key again requires the same passphrase.
+3. In the public repository use **Add file → Create new file** and enter `.well-known/appspecific/com.tesla.3p.public-key.pem` as the full filename. Paste the entire displayed public PEM, including its BEGIN and END lines. Commit it. Add an empty `.nojekyll` file at the publishing root so Pages serves the dot directory. For the HTTPS callback, also upload the supplied `callback.html` at the publishing root. Publish only these public site files. After deployment, click **Check hosted public key**. Power House verifies that HTTPS returns the same key. Keep this URL available for as long as you use the registration. [Tesla onboarding](https://developer.tesla.com/docs/fleet-api/getting-started/what-is-fleet-api)
+4. Open **Power House** in the Tesla developer dashboard. Client credentials identify your developer application. Access to a personal vehicle requires a separate owner consent grant. Enable **Authorization Code and Machine-to-Machine** (both `authorization_code` and `client_credentials`). If the portal locks this setting, create an additional application with a unique name such as **Power House Personal** and the combined grant. Use that application's own credentials for every remaining step. The authenticated dashboard determines which fields are editable for your account. [Tesla dashboard](https://developer.tesla.com/dashboard) · [Partner authentication](https://developer.tesla.com/docs/fleet-api/authentication/partner-tokens) · [Owner authorization](https://developer.tesla.com/docs/fleet-api/authentication/third-party-tokens)
+5. Enter the values below in that application's configuration, substituting your real hostname. Save the configuration and complete any approval Tesla shows. The public Tesla guide illustrates HTTPS callbacks and does not explicitly promise HTTP loopback support. If the dashboard accepts the exact loopback URI, select **Local loopback** in Power House. Otherwise use the HTTPS value and select **Hosted HTTPS callback**. The supplied static page forwards the short-lived code and state to the fixed local listener in the same browser. With HTTPS mode the hosting provider receives the callback query. Use a site you control with no analytics or third-party scripts. [Tesla authorization parameters](https://developer.tesla.com/docs/fleet-api/authentication/third-party-tokens)
+
+| Dashboard setting | Value |
+|---|---|
+| Allowed origin | `https://YOUR-USERNAME.github.io` |
+| Allowed redirect URI, hosted | `https://YOUR-USERNAME.github.io/callback.html` |
+| Allowed redirect URI, local if accepted | `http://127.0.0.1:8765/oauth/callback` |
+| Fleet API permission | Vehicle Information (`vehicle_device_data`) |
+| OAuth scopes sent by Power House | `openid offline_access vehicle_device_data` |
+| Domain for EU registration | `YOUR-USERNAME.github.io` |
+| Fleet API audience and base URL | `https://fleet-api.prd.eu.vn.cloud.tesla.com` |
+
+6. Enter the developer **Client ID** and **Client Secret** in the local interface and choose **Use credentials for this session**. Click **Test partner authentication**, then **Verify EU registration**. If the lookup shows that registration is needed, click **Register domain with Tesla Europe…** and confirm the displayed domain. This submits the EU registration and checks the registered key. If registration times out, use **Verify EU registration** before repeating the write. The original partner connection test remains available separately and makes a vehicle-list request with the partner token. [Tesla partner endpoints](https://developer.tesla.com/docs/fleet-api/endpoints/partner-endpoints) · [Tesla regions](https://developer.tesla.com/docs/fleet-api/getting-started/regions-countries)
+
+## Connect the car
+
+Select the callback you registered, click **Sign in with Tesla**, and complete consent on Tesla's website using the account that sees your Model 3 in the Tesla mobile app. Power House exchanges the code server-side and requests the vehicle list once. Select the car by name and masked VIN. **Read cached data** fetches the last snapshot Tesla holds and displays the timestamps Tesla supplies. **Read live data** makes an on-demand read when discovery reports the car online. If the car has since gone online, click **Discover vehicles** to update its status. Cached coverage varies by vehicle and firmware. A missing value displays as **Unavailable** and a reported zero retains its unit. [Tesla vehicle endpoints](https://developer.tesla.com/docs/fleet-api/endpoints/vehicle-endpoints)
+
+The process keeps credentials and rotating owner tokens in memory. It refreshes on demand and stopping Python clears the session. There is no database, scheduled polling, wake-up request or vehicle command. Vehicle reads can incur Fleet API charges. The local connection checklist shows the last result of each attempted step. If Tesla returns an empty personal list, verify the account in the mobile app, its vehicle access and Vehicle Information consent. A partner token and an empty partner list alone establish only developer access. [Tesla FAQ](https://developer.tesla.com/docs/fleet-api/support/faq)
+
+## Verification
+
+Run `python -m unittest -v` in this directory. The tests use mock Tesla responses, a real loopback HTTP server and disposable encrypted keys. Live acceptance requires owner consent, a discovered vehicle and a successful snapshot in the interface.
