@@ -43,6 +43,7 @@ function selection(){
   for(const [label,value] of Object.entries(data.values))row(panel,label,value);
 }
 function render(data){
+  if(data.domain && current?.domain!==data.domain)el('redirect').value='hosted';
   current=data; el('checks').replaceChildren();
   for(const [step,status] of Object.entries(data.checks))row(el('checks'),step,status);
   el('public').textContent=data.public;
