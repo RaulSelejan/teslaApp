@@ -14,7 +14,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler
 from urllib.parse import urlencode, urlsplit, parse_qs
 from urllib.error import HTTPError, URLError
 
-from tesla_session import Session
+from tesla_session import KEY, KEY_PATH, Session
 
 AUTH = 'https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/token'
 BASE = 'https://fleet-api.prd.eu.vn.cloud.tesla.com'
@@ -165,14 +165,36 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(200, json.dumps(result).encode(), 'application/json; charset=utf-8')
 
 
-app = Session(request_json, safe_error, http, AUTH, BASE, ROOT)
+def new_session():
+    session = Session(request_json, safe_error, http, AUTH, BASE, ROOT)
+    public_key = ROOT / KEY_PATH.lstrip('/')
+    if public_key.is_file():
+        session.domain = 'teslaapp.raulselejan.workers.dev'
+        session.public = public_key.read_text(encoding='ascii')
+        session.checks[KEY] = 'Deployment key loaded. Hosted copy unchecked this session.'
+    return session
+
+
+app = new_session()
+
+
+class PowerHouseServer(HTTPServer):
+    allow_reuse_address = False
+    allow_reuse_port = False
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--no-browser', action='store_true', help='Print the local URL without opening a browser')
     options = parser.parse_args()
-    with HTTPServer(('127.0.0.1', 8765), Handler) as server:
+    try:
+        server = PowerHouseServer(('127.0.0.1', 8765), Handler)
+    except OSError as err:
+        import errno
+        if err.errno != errno.EADDRINUSE and getattr(err, 'winerror', None) != 10048:
+            raise
+        parser.exit(1, 'Port 8765 is in use. If Power House is already running, open http://127.0.0.1:8765/\n')
+    with server:
         url = f'http://127.0.0.1:{server.server_port}/'
         print(f'Power House is running at {url}\nOpen this URL if the browser does not open. Press Ctrl+C to stop.')
         if not options.no_browser:

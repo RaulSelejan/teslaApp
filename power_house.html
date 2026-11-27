@@ -4,11 +4,12 @@
 </style><style>pre,code{white-space:pre-wrap;overflow-wrap:anywhere}.check span:first-child{flex:0 0 40%}select{padding:8px;max-width:100%}button{margin-top:12px}fieldset{border:0;padding:0;margin:0}summary{cursor:pointer}</style></head>
 <body><main><div class="tag">POWER HOUSE / V0.2</div><h1>Connect your Tesla</h1><p>Europe · Read-only vehicle access</p>
 <fieldset id="controls">
-<form class="panel" id="credentials" autocomplete="off"><h2>Developer credentials</h2>
+<details class="panel" id="credentialPanel" open><summary>Developer credentials</summary>
+<form id="credentials" autocomplete="off">
 <label for="cid">Client ID</label><input id="cid" required spellcheck="false">
 <label for="secret">Client Secret</label><input id="secret" type="password" required>
 <button>Use credentials for this session</button><button type="button" id="legacy">Run original partner connection test</button>
-<p id="legacyResult" aria-live="polite"></p></form>
+<p id="legacyResult" aria-live="polite"></p></form></details>
 <details class="panel"><summary>Application registration</summary><label for="domain">Public application domain</label><input id="domain" placeholder="username.github.io">
 <label for="existing">Existing OpenSSL public key (public-key.pem)</label><input type="file" id="existing" accept=".pem"><button id="useExisting">Use existing public key</button>
 <label for="password">Local private-key passphrase (12+ characters)</label><input id="password" type="password" autocomplete="off">
@@ -17,7 +18,8 @@
 <button data-op="verify">Verify EU registration</button><button id="register">Register domain with Tesla Europe…</button></details>
 <section class="panel"><h2>Personal authorization</h2><label for="redirect">Registered callback</label>
 <select id="redirect"><option value="local">Local loopback</option><option value="hosted">Hosted HTTPS callback</option></select>
-<button id="signin">Sign in with Tesla</button><button data-op="discover">Discover vehicles</button></section>
+<p id="ownerStatus" aria-live="polite"></p>
+<button id="signin" disabled>Sign in with Tesla</button><button data-op="discover" id="discover" disabled>Discover vehicles</button></section>
 <section class="panel" aria-live="polite"><h2>Connection checklist</h2><div id="checks"></div></section>
 <section class="panel" id="vehicles" hidden><h2>Authorized vehicles</h2><label for="cars">Vehicle · last reported state · masked VIN</label><select id="cars"></select>
 <button data-op="cached">Read cached data</button><button id="live">Read live data</button><div id="snapshot"></div></section></fieldset>
@@ -43,7 +45,20 @@ function selection(){
   for(const [label,value] of Object.entries(data.values))row(panel,label,value);
 }
 function render(data){
-  if(data.domain && current?.domain!==data.domain)el('redirect').value='hosted';
+  if(data.domain && current?.domain!==data.domain){
+    el('redirect').value='hosted';
+    el('domain').value=data.domain;
+  }
+  const credentials=data.checks['Developer credentials'];
+  const ready=['Entered for this session','Accepted by Tesla'].includes(credentials);
+  if(!current || current.checks['Developer credentials']!==credentials)el('credentialPanel').open=!ready;
+  const owner=data.checks['Personal OAuth authorization'];
+  const connected=owner==='Authorized';
+  el('ownerStatus').textContent=connected?'Signed in with Tesla.':!ready?'Enter your developer credentials to enable sign-in.':
+    owner==='Unchecked'?'Ready to sign in with Tesla.':owner;
+  el('signin').disabled=!ready;
+  el('signin').textContent=connected?'Sign in again with Tesla':'Sign in with Tesla';
+  el('discover').disabled=!connected;
   current=data; el('checks').replaceChildren();
   for(const [step,status] of Object.entries(data.checks))row(el('checks'),step,status);
   el('public').textContent=data.public;
@@ -87,9 +102,14 @@ el('useExisting').onclick=async()=>{
 };
 el('key').onclick=()=>{const password=el('password').value;el('password').value='';send('key',{domain:el('domain').value,password});};
 el('register').onclick=()=>{if(current.domain && confirm('Register '+current.domain+' with Tesla Europe? This changes the partner account.'))send('register',{confirm:current.domain});};
-el('signin').onclick=()=>send('signin',{hosted:el('redirect').value==='hosted'});
+el('signin').onclick=()=>{
+  if(current?.checks['Personal OAuth authorization']==='Authorized' &&
+      !confirm('Start a new Tesla sign-in for this connected session?'))return;
+  send('signin',{hosted:el('redirect').value==='hosted'});
+};
 el('cars').onchange=selection;
 el('live').onclick=()=>send('live',{car:el('cars').value});
 for(const button of document.querySelectorAll('[data-op]'))button.onclick=()=>send(button.dataset.op,{car:el('cars').value});
 send('status');
+window.addEventListener('pageshow',event=>{if(event.persisted)send('status');});
 </script></body></html>

@@ -4,7 +4,9 @@
 
 From this directory in PowerShell run `python power_house.py`. Leave the terminal open during sign-in. Power House opens `http://127.0.0.1:8765/`. Stop it with Ctrl+C. The fixed loopback port is part of the redirect URI. Python uses its standard library. Key generation uses OpenSSL on PATH or the copy in Git for Windows, which is installed on this machine.
 
-## One-time Tesla setup
+For the registered Power House deployment, startup loads the repository’s public key and selects `https://teslaapp.raulselejan.workers.dev/callback.html`. Enter developer credentials once per process, then choose **Sign in with Tesla** on the PC running Power House. After consent, the same page shows **Signed in with Tesla** and your discovered vehicles. Reopening the local URL uses the running session.
+
+## One-time Tesla setup for another deployment
 
 1. Choose a public HTTPS hostname you control. If you already have a static site, its root can host the key. A free option is a GitHub Pages user site. Create a **separate public repository** named exactly `YOUR-USERNAME.github.io`, initialize it with a README and enable **Settings → Pages → Deploy from a branch → main → / (root) → Save**. If you already use this site, add the files to its existing publishing source. The hostname in the following steps is your actual lowercase GitHub username followed by `.github.io`. [GitHub Pages quickstart](https://docs.github.com/en/pages/quickstart)
 2. In Power House, expand **Application registration**. If you generated a pair in Git Bash, enter the hostname, select ~/public-key.pem under **Existing OpenSSL public key**, and click **Use existing public key**. Continue to step 3. To generate a new pair in Power House, enter that hostname and a unique local passphrase of at least 12 characters. Click **Generate or open key pair**. Save the passphrase in your password manager. Power House uses OpenSSL P-256 and saves the encrypted private key locally in `.power-house/private.pem`. Keep an encrypted backup. Opening this key again requires the same passphrase.

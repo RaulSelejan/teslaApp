@@ -143,6 +143,8 @@ class Session:
         cid, secret = d.get('client_id'), d.get('secret')
         if not all(isinstance(v, str) and 0 < len(v.strip()) <= 4096 for v in (cid, secret)):
             raise Problem('Both credential fields are required.')
+        if (cid.strip(), secret.strip()) == (self.client, self.secret):
+            return
         self.forget_owner()
         self.client, self.secret = cid.strip(), secret.strip()
         self.partner = ''

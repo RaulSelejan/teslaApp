@@ -46,6 +46,19 @@ class SessionTests(unittest.TestCase):
             self.s.callback({'state':['replay']})
         self.assertEqual(self.api.call_count,2)
 
+    def test_reentering_credentials_preserves_consent_and_vehicle(self):
+        query = self.start()
+        credentials = {'op':'configure','client_id':'fixture-client','secret':'fixture-secret'}
+        self.s.action(credentials)
+        self.api.side_effect = [(200,TOKENS), (200,{'response':[CAR]})]
+        self.s.callback(query)
+        self.s.action(credentials)
+        self.assertEqual(self.s.checks[OWNER], 'Authorized')
+        self.assertEqual(len(self.s.cars), 1)
+        self.s.action(dict(credentials, secret='changed-secret'))
+        self.assertFalse(self.s.refresh)
+        self.assertFalse(self.s.cars)
+
     def test_wrong_duplicate_expired_states(self):
         query = self.start()
         for state in [['wrong'], query['state']*2, ['é']]:
@@ -138,6 +151,15 @@ class SessionTests(unittest.TestCase):
 
 
 class LocalServerTests(unittest.TestCase):
+    def test_fresh_start_has_production_callback_without_credentials(self):
+        session = app.new_session()
+        self.assertEqual(session.public.strip(), (app.ROOT / app.KEY_PATH[1:]).read_text().strip())
+        self.assertFalse(session.client or session.secret or session.refresh)
+        session.configure({'client_id':'fixture-client','secret':'fixture-secret'})
+        url = session.action({'op':'signin','hosted':True})['authorize']
+        self.assertEqual(parse_qs(urlsplit(url).query)['redirect_uri'],
+                         ['https://teslaapp.raulselejan.workers.dev/callback.html'])
+
     def test_http_boundary(self):
         with app.HTTPServer(('127.0.0.1',0),app.Handler) as server:
             thread=threading.Thread(target=server.serve_forever,daemon=True)
