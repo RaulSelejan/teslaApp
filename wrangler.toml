@@ -1,0 +1,10 @@
+name = "teslaapp"
+compatibility_date = "2025-09-01"
+
+[build]
+command = "python build_assets.py"
+
+[assets]
+directory = "./dist"
+html_handling = "none"
+

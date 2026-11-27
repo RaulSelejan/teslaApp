@@ -5,3 +5,5 @@ __pycache__/
 .env
 .env.*
 !/.well-known/appspecific/com.tesla.3p.public-key.pem
+/dist/
+/.wrangler/
