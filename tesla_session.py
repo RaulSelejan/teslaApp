@@ -10,6 +10,8 @@ import time
 from urllib.error import URLError
 from urllib.parse import urlencode
 
+from dashboard_data import make_snapshot, reading_summary
+
 LOCAL_CALLBACK = 'http://127.0.0.1:8765/oauth/callback'
 KEY_PATH = '/.well-known/appspecific/com.tesla.3p.public-key.pem'
 SCOPE = 'openid offline_access vehicle_device_data'
@@ -85,30 +87,6 @@ def public_bytes(pem):
     return base64.b64decode(''.join(pem.strip().splitlines()[1:-1]), validate=True)
 
 
-def metrics(data):
-    fields = (
-        ('vehicle_config', 'car_type', 'Model', ''),
-        ('charge_state', 'battery_level', 'Battery', '%'),
-        ('charge_state', 'est_battery_range', 'Estimated range', 'mi'),
-        ('vehicle_state', 'odometer', 'Odometer', 'mi'),
-        ('charge_state', 'charging_state', 'Charging status', ''),
-        ('charge_state', 'charger_voltage', 'Charging voltage', 'V'),
-        ('charge_state', 'charger_actual_current', 'Charging current', 'A'),
-        ('charge_state', 'charger_power', 'Charging power', 'kW'),
-        ('climate_state', 'inside_temp', 'Interior temperature', '°C'),
-        ('climate_state', 'outside_temp', 'Exterior temperature', '°C'),
-        ('vehicle_state', 'car_version', 'Software version', ''),
-        *(( 'vehicle_state', 'tpms_pressure_' + suffix, 'Tyre pressure ' + wheel, 'bar')
-          for suffix, wheel in [('fl','front left'), ('fr','front right'), ('rl','rear left'), ('rr','rear right')]),
-    )
-    result = {}
-    for group, key, label, unit in fields:
-        block = data.get(group)
-        value = block.get(key) if isinstance(block, dict) else None
-        result[label] = 'Unavailable' if value is None else f'{value} {unit}'.strip()
-    return result
-
-
 class Session:
     def __init__(self, request, redact, http, auth, base, root):
         self.request, self.redact, self.http = request, redact, http
@@ -120,6 +98,8 @@ class Session:
         self.expires = 0
         self.cars = {}
         self.snapshot = None
+        self.latest = {}
+        self.history = {}
 
     def call(self, url, data=None, token=None, json_body=False):
         status, body = self.request(url, data, token, json_body)
@@ -137,6 +117,8 @@ class Session:
         self.pending = None
         self.cars.clear()
         self.snapshot = None
+        self.latest.clear()
+        self.history.clear()
         self.checks.update(dict.fromkeys((OWNER, LIST, READ), 'Unchecked'))
 
     def configure(self, d):
@@ -281,9 +263,7 @@ class Session:
         return body.get('response')
 
     def discover(self):
-        self.cars.clear()
-        self.snapshot = None
-        self.checks[READ] = 'Unchecked'
+        old_keys = {car['vin']: key for key, car in self.cars.items()}
         cars = self.read('/api/1/vehicles')
         if not isinstance(cars, list):
             raise Problem('Tesla returned no vehicle list.')
@@ -291,23 +271,31 @@ class Session:
         for car in cars:
             if not isinstance(car, dict) or not VIN.fullmatch(str(car.get('vin', ''))):
                 raise Problem('Tesla returned a vehicle without a valid VIN.')
-            discovered[secrets.token_urlsafe(12)] = car
+            key = old_keys.get(car['vin']) or secrets.token_urlsafe(12)
+            discovered[key] = car
         self.cars = discovered
+        self.latest = {key: snap for key, snap in self.latest.items() if key in discovered}
+        self.history = {key: reads for key, reads in self.history.items() if key in discovered}
+        if self.snapshot and self.snapshot['car'] not in discovered:
+            self.snapshot = None
+            self.checks[READ] = 'Unchecked'
         self.checks[LIST] = f'{len(cars)} authorized vehicle(s)' if cars else 'No vehicles returned. ' + HINTS[LIST]
 
     def vehicle(self, key, cached):
-        self.snapshot = None
         car = self.cars.get(key)
         if not car:
             raise Problem('Discover vehicles and select one first.')
         if not cached and car.get('state') != 'online':
             raise Problem('Last discovery did not report this vehicle online.')
-        suffix = 'vehicle_data_cached' if cached else 'vehicle_data?endpoints=charge_state%3Bclimate_state%3Bvehicle_state%3Bvehicle_config'
+        suffix = 'vehicle_data_cached' if cached else 'vehicle_data?endpoints=charge_state%3Bclimate_state%3Bvehicle_state%3Bvehicle_config%3Bgui_settings'
         data = self.read('/api/1/vehicles/' + car['vin'] + '/' + suffix)
         if not isinstance(data, dict) or not data:
             raise Problem('Tesla returned no vehicle data.')
-        stamps = {k: v['timestamp'] for k,v in data.items() if isinstance(v,dict) and isinstance(v.get('timestamp'),(int,float))}
-        self.snapshot = dict(car=key, values=metrics(data), timestamps=stamps, cached=cached)
+        snapshot = make_snapshot(data, key, cached, time.time_ns() // 1_000_000)
+        self.latest[key] = self.snapshot = snapshot
+        history = self.history.setdefault(key, [])
+        history.append(reading_summary(snapshot))
+        del history[:-32]
         self.checks[READ] = 'Cached Tesla snapshot received' if cached else 'Live Tesla snapshot received'
 
     def failure(self, step, err):
@@ -365,5 +353,7 @@ class Session:
             self.checks[OWNER] = 'Sign-in expired. Start sign-in again.'
         cars = {k: dict(name=v.get('display_name') or 'Unnamed Tesla', state=v.get('state') or 'Unavailable',
                         vin='••••' + v['vin'][-4:]) for k,v in self.cars.items()}
-        return dict(checks=self.checks, cars=cars, snapshot=self.snapshot, public=self.public,
+        selected = d.get('car') or (self.snapshot['car'] if self.snapshot else None)
+        return dict(checks=self.checks, cars=cars, snapshot=self.latest.get(selected),
+                    history=self.history.get(selected, []), public=self.public,
                     domain=self.domain, key_path=KEY_PATH, **extra)

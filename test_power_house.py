@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
 import power_house as app
+from dashboard_data import make_snapshot
 from tesla_session import KEY, LIST, OWNER, READ, REG, LOCAL_CALLBACK, Session, local_public_key
 
 CAR = {'vin': '5YJ3E1EA0KF000001', 'state': 'online', 'display_name': 'Fixture'}
@@ -115,6 +116,60 @@ class SessionTests(unittest.TestCase):
         self.assertIn('login_required',self.s.checks[OWNER])
         self.assertFalse(self.s.refresh)
 
+    def test_signals_keep_zero_false_and_distinct_range_types(self):
+        data = {
+            'charge_state': {'battery_level': 0, 'battery_range': 27.5, 'charge_energy_added': 0,
+                             'timestamp': 1200, 'user_charge_token': 'private'},
+            'vehicle_state': {'locked': False, 'software_update': {'download_perc': 0},
+                              'media_info': {'title': 'private'}},
+            'vehicle_config': {'car_type': 'model3'}, 'vin': CAR['vin'],
+            'drive_state': {'latitude': 1, 'timestamp': 1500},
+        }
+        snap = make_snapshot(data, 'opaque', True, 2500)
+        readings = {f"{s['group']}.{s['field']}":s['value'] for s in snap['signals']}
+        self.assertEqual(snap['values']['Battery'], '0 %')
+        self.assertEqual(snap['values']['Estimated range'], 'Unavailable')
+        self.assertEqual(readings['charge_state.battery_range'], 27.5)
+        self.assertIs(readings['vehicle_state.locked'], False)
+        self.assertEqual(readings['vehicle_state.software_update.download_perc'], 0)
+        self.assertEqual(snap['timestamps'], {'charge_state':1200})
+        for private in ['private', CAR['vin'], 'latitude', 'user_charge_token']:
+            self.assertNotIn(private,json.dumps(snap))
+
+    def test_history_is_per_car_bounded_and_retained_after_failed_read(self):
+        first = self.login()
+        other = dict(CAR, vin='5YJ3E1EA0KF000002')
+        self.api.side_effect = [(200,{'response':[other,CAR]})]
+        cars = self.s.action({'op':'discover'})['cars']
+        self.assertIn(first,cars)
+        second = next(key for key in cars if key!=first)
+        self.api.side_effect = [
+            (200,{'response':{'charge_state':{'battery_level':i,'timestamp':i+1}}}) for i in range(34)
+        ] + [(503,{'error':'offline'}),(200,{'response':[other]})]
+        for _ in range(34):
+            last = self.s.action({'op':'cached','car':first})
+        self.assertEqual(len(last['history']),32)
+        self.assertEqual(last['history'][0]['readings']['charge_state.battery_level'],2)
+        self.assertEqual(self.s.action({'op':'status','car':second})['history'],[])
+        failed = self.s.action({'op':'cached','car':first})
+        self.assertIn('503',failed['checks'][READ])
+        self.assertEqual(failed['snapshot'],last['snapshot'])
+        self.assertEqual(len(failed['history']),32)
+        self.s.action({'op':'discover'})
+        removed = self.s.action({'op':'status','car':first})
+        self.assertIsNone(removed['snapshot'])
+        self.assertFalse(removed['history'])
+
+    def test_new_owner_flow_clears_vehicle_history(self):
+        car = self.login()
+        self.api.side_effect = [(200,{'response':{'charge_state':{'battery_level':0}}})]
+        self.s.action({'op':'cached','car':car})
+        self.s.signin(False)
+        status = self.s.action({'op':'status','car':car})
+        self.assertFalse(status['cars'])
+        self.assertFalse(status['history'])
+        self.assertIsNone(status['snapshot'])
+
     def test_import_existing_public_key(self):
         with tempfile.TemporaryDirectory() as temp:
             public = local_public_key(Path(temp), 'fixture-passphrase')
@@ -161,7 +216,7 @@ class LocalServerTests(unittest.TestCase):
                          ['https://teslaapp.raulselejan.workers.dev/callback.html'])
 
     def test_http_boundary(self):
-        with app.HTTPServer(('127.0.0.1',0),app.Handler) as server:
+        with app.PowerHouseServer(('127.0.0.1',0),app.Handler) as server:
             thread=threading.Thread(target=server.serve_forever,daemon=True)
             thread.start()
             try:
@@ -172,6 +227,9 @@ class LocalServerTests(unittest.TestCase):
                         response=conn.getresponse()
                         return response.status,response.read()
                 self.assertIn(b'Sign in with Tesla',request('GET','/')[1])
+                for path in app.ASSETS:
+                    self.assertEqual(request('GET',path)[0], 200)
+                self.assertEqual(request('GET','/dashboard/../tesla_session.py')[0],404)
                 self.assertEqual(request('GET','/',headers={'Host':'example.com'})[0],403)
                 self.assertEqual(request('GET','/oauth/callback?state=invalid')[0],400)
                 self.assertEqual(request('POST','/action','{}')[0],403)

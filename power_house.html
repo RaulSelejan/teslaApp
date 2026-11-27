@@ -1,115 +1,179 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Power House • Vehicle Connection</title>
-<style>
-*{box-sizing:border-box}body{font:16px system-ui,sans-serif;background:#101318;color:#edf0f5;margin:0}main{max-width:650px;margin:0 auto;padding:40px 20px}h1{font-size:36px;margin:8px 0}h2{font-size:19px}p{color:#b1bac9;line-height:1.5}.tag{color:#a5b4fc;font-size:12px;letter-spacing:2px;font-weight:700}.panel{background:#1b2029;border:1px solid #343b48;border-radius:16px;padding:22px;margin-top:20px}label{display:block;font-size:14px;margin:15px 0 7px}input{width:100%;padding:13px;border:1px solid #505a6b;border-radius:8px;background:#101318;color:white;font:inherit}button{background:#a5b4fc;color:#111827;width:100%;border:0;border-radius:8px;padding:13px;font:inherit;font-weight:700;margin-top:20px;cursor:pointer}button:disabled{opacity:.5}.check{display:flex;justify-content:space-between;gap:15px;padding:12px 0;border-bottom:1px solid #343b48;font-size:14px}.value{text-align:right;overflow-wrap:anywhere}.good{color:#86efac}.warn{color:#fcd34d}.bad{color:#fca5a5}.car{padding:12px 0;border-bottom:1px solid #343b48}.small{font-size:12px}#detail{overflow-wrap:anywhere}footer{font-size:12px;color:#9ca3af;margin-top:20px}
-</style><style>pre,code{white-space:pre-wrap;overflow-wrap:anywhere}.check span:first-child{flex:0 0 40%}select{padding:8px;max-width:100%}button{margin-top:12px}fieldset{border:0;padding:0;margin:0}summary{cursor:pointer}</style></head>
-<body><main><div class="tag">POWER HOUSE / V0.2</div><h1>Connect your Tesla</h1><p>Europe · Read-only vehicle access</p>
-<fieldset id="controls">
-<details class="panel" id="credentialPanel" open><summary>Developer credentials</summary>
-<form id="credentials" autocomplete="off">
-<label for="cid">Client ID</label><input id="cid" required spellcheck="false">
-<label for="secret">Client Secret</label><input id="secret" type="password" required>
-<button>Use credentials for this session</button><button type="button" id="legacy">Run original partner connection test</button>
-<p id="legacyResult" aria-live="polite"></p></form></details>
-<details class="panel"><summary>Application registration</summary><label for="domain">Public application domain</label><input id="domain" placeholder="username.github.io">
-<label for="existing">Existing OpenSSL public key (public-key.pem)</label><input type="file" id="existing" accept=".pem"><button id="useExisting">Use existing public key</button>
-<label for="password">Local private-key passphrase (12+ characters)</label><input id="password" type="password" autocomplete="off">
-<button id="key">Generate or open key pair</button><pre id="public"></pre><code id="path"></code>
-<button data-op="hosted">Check hosted public key</button><button data-op="partner">Test partner authentication</button>
-<button data-op="verify">Verify EU registration</button><button id="register">Register domain with Tesla Europe…</button></details>
-<section class="panel"><h2>Personal authorization</h2><label for="redirect">Registered callback</label>
-<select id="redirect"><option value="local">Local loopback</option><option value="hosted">Hosted HTTPS callback</option></select>
-<p id="ownerStatus" aria-live="polite"></p>
-<button id="signin" disabled>Sign in with Tesla</button><button data-op="discover" id="discover" disabled>Discover vehicles</button></section>
-<section class="panel" aria-live="polite"><h2>Connection checklist</h2><div id="checks"></div></section>
-<section class="panel" id="vehicles" hidden><h2>Authorized vehicles</h2><label for="cars">Vehicle · last reported state · masked VIN</label><select id="cars"></select>
-<button data-op="cached">Read cached data</button><button id="live">Read live data</button><div id="snapshot"></div></section></fieldset>
-<p id="error" role="alert"></p><footer>Credentials and tokens expire with this local session. Vehicle reads run on request.</footer></main>
-<script>
-const el = id => document.getElementById(id);
-let current;
-function row(parent,label,value){
-  const div=document.createElement('div'); div.className='check';
-  for(const text of [label,value]){
-    const span=document.createElement('span'); span.textContent=text; div.append(span);
-  }
-  div.lastChild.className='value'; parent.append(div);
-}
-function selection(){
-  const car=el('cars').value;
-  el('live').disabled=current.cars[car]?.state!=='online';
-  const panel=el('snapshot'); panel.replaceChildren();
-  const data=current.snapshot;
-  if(!data || data.car!==car)return;
-  row(panel,'Source',data.cached?'Tesla cache (may be hours old)':'Live vehicle read');
-  for(const [block,time] of Object.entries(data.timestamps))row(panel,block,new Date(time).toLocaleString());
-  for(const [label,value] of Object.entries(data.values))row(panel,label,value);
-}
-function render(data){
-  if(data.domain && current?.domain!==data.domain){
-    el('redirect').value='hosted';
-    el('domain').value=data.domain;
-  }
-  const credentials=data.checks['Developer credentials'];
-  const ready=['Entered for this session','Accepted by Tesla'].includes(credentials);
-  if(!current || current.checks['Developer credentials']!==credentials)el('credentialPanel').open=!ready;
-  const owner=data.checks['Personal OAuth authorization'];
-  const connected=owner==='Authorized';
-  el('ownerStatus').textContent=connected?'Signed in with Tesla.':!ready?'Enter your developer credentials to enable sign-in.':
-    owner==='Unchecked'?'Ready to sign in with Tesla.':owner;
-  el('signin').disabled=!ready;
-  el('signin').textContent=connected?'Sign in again with Tesla':'Sign in with Tesla';
-  el('discover').disabled=!connected;
-  current=data; el('checks').replaceChildren();
-  for(const [step,status] of Object.entries(data.checks))row(el('checks'),step,status);
-  el('public').textContent=data.public;
-  el('path').textContent=data.domain?'https://'+data.domain+data.key_path:'';
-  const selected=el('cars').value; el('cars').replaceChildren();
-  for(const [id,car] of Object.entries(data.cars)){
-    el('cars').add(new Option([car.name,car.state,car.vin].join(' · '),id));
-  }
-  if(data.cars[selected])el('cars').value=selected;
-  el('vehicles').hidden=!el('cars').length;
-  selection();
-}
-async function send(op,fields={},path='/action'){
-  el('controls').disabled=true; el('error').textContent='';
-  try{
-    const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Local-Nonce':'__NONCE__'},body:JSON.stringify({op,...fields})});
-    if(!response.ok)throw Error('Local request failed (HTTP '+response.status+'). Reload Power House and retry.');
-    const data=await response.json();
-    if(path==='/test'){
-      el('legacyResult').textContent=[data.auth,data.api,data.vehicle,data.detail,...data.cars.map(c=>[c.name,c.state,c.vin].join(' · '))].join(' / ');
-    }else{
-      render(data);
-      if(data.authorize)location.assign(data.authorize);
-    }
-  }catch(err){el('error').textContent=err.message;}finally{el('controls').disabled=false;}
-}
-function credentials(){
-  const fields={client_id:el('cid').value.trim(),secret:el('secret').value.trim()};
-  el('secret').value=''; return fields;
-}
-el('credentials').onsubmit=e=>{e.preventDefault();send('configure',credentials());};
-el('legacy').onclick=()=>{if(el('credentials').reportValidity())send('test',credentials(),'/test');};
-el('useExisting').onclick=async()=>{
-  const file=el('existing').files[0];
-  if(!file || file.size>1024){el('error').textContent='Choose your OpenSSL public-key.pem file.';return;}
-  const pem=(await file.text()).trim();
-  if(!/^-----BEGIN PUBLIC KEY-----\s+[A-Za-z0-9+/=\s]+-----END PUBLIC KEY-----$/.test(pem)){
-    el('error').textContent='Choose the PEM labeled BEGIN PUBLIC KEY.';return;
-  }
-  send('import_key',{domain:el('domain').value,pem});
-};
-el('key').onclick=()=>{const password=el('password').value;el('password').value='';send('key',{domain:el('domain').value,password});};
-el('register').onclick=()=>{if(current.domain && confirm('Register '+current.domain+' with Tesla Europe? This changes the partner account.'))send('register',{confirm:current.domain});};
-el('signin').onclick=()=>{
-  if(current?.checks['Personal OAuth authorization']==='Authorized' &&
-      !confirm('Start a new Tesla sign-in for this connected session?'))return;
-  send('signin',{hosted:el('redirect').value==='hosted'});
-};
-el('cars').onchange=selection;
-el('live').onclick=()=>send('live',{car:el('cars').value});
-for(const button of document.querySelectorAll('[data-op]'))button.onclick=()=>send(button.dataset.op,{car:el('cars').value});
-send('status');
-window.addEventListener('pageshow',event=>{if(event.persisted)send('status');});
-</script></body></html>
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="local-nonce" content="__NONCE__">
+  <title>Power House · Vehicle dashboard</title>
+  <link rel="stylesheet" href="/dashboard/dashboard.css">
+  <script src="/dashboard/dashboard.js" defer></script>
+</head>
+<body>
+<header class="masthead">
+  <div class="mast-inner">
+    <a class="brand" href="#overview"><span class="brand-mark" aria-hidden="true"></span>Power House</a>
+    <nav aria-label="Dashboard">
+      <a href="#overview" aria-current="page">Overview</a>
+      <a href="#signals">Signals</a>
+      <a href="#history">Read history</a>
+      <a href="#connection">Connection</a>
+    </nav>
+    <span class="connection-indicator"><i id="auth-light" class="light"></i><span id="auth-label">Local session</span></span>
+  </div>
+</header>
+
+<main>
+  <fieldset id="controls">
+    <div class="page-head">
+      <div>
+        <h1 id="view-title">Vehicle overview</h1>
+        <p id="view-sub" class="subtle" aria-live="polite"></p>
+      </div>
+      <div class="actions" id="read-actions" hidden>
+        <button type="button" id="cached">Read cached data</button>
+        <button type="button" id="live" class="primary"><span class="bolt" aria-hidden="true"></span>Read live data</button>
+      </div>
+    </div>
+    <div class="toolbar" id="vehicle-tools" hidden>
+      <label for="cars">Vehicle</label><select id="cars" aria-label="Authorized vehicle"></select>
+      <label for="units" class="units-label">Units</label>
+      <select id="units"><option value="metric">Metric</option><option value="imperial">Imperial</option></select>
+    </div>
+    <p id="notice" role="status" hidden></p>
+    <p id="error" class="error" role="alert" hidden></p>
+
+    <section id="overview" class="screen">
+      <div class="overview-grid">
+        <article class="card garage">
+          <div class="studio">
+            <img id="car-art" src="/dashboard/model-3.webp" alt="Studio illustration of a Model 3" width="1500" height="624" hidden>
+            <div class="identity">
+              <p id="model" class="eyeline">Tesla</p>
+              <h2 id="vehicle-name">Vehicle</h2>
+              <p id="vin" class="mono"></p>
+            </div>
+            <span id="vehicle-state" class="badge"></span>
+            <small id="art-credit" class="art-credit" hidden>Model illustration</small>
+          </div>
+          <div class="garage-specs">
+            <div><span>Odometer</span><b id="odo">Unavailable</b></div>
+            <div><span>Estimated range</span><b id="range">Unavailable</b></div>
+            <div><span>Software</span><b id="firmware">Unavailable</b></div>
+          </div>
+        </article>
+
+        <article class="card charge-card">
+          <div class="card-head"><h2><i class="icon battery-icon" aria-hidden="true"></i>Battery &amp; charge</h2>
+            <span id="charging" class="badge"></span>
+          </div>
+          <div class="battery-number" id="soc">Unavailable</div>
+          <div class="charge-bar" id="soc-meter" role="meter" aria-label="Battery charge" aria-valuemin="0" aria-valuemax="100">
+            <div id="soc-fill"></div><i id="soc-target" hidden></i>
+          </div>
+          <div class="scale-labels"><span>0%</span><span id="target-label"></span><span>100%</span></div>
+          <div class="electrics">
+            <div><span>Power</span><b id="power">Unavailable</b></div>
+            <div><span>Voltage</span><b id="voltage">Unavailable</b></div>
+            <div><span>Current</span><b id="current">Unavailable</b></div>
+          </div>
+          <dl id="charge-detail" class="compact-list"></dl>
+        </article>
+      </div>
+
+      <div class="section-head"><h2>Vehicle systems</h2><a href="#signals">Explore signals <span aria-hidden="true">↗</span></a></div>
+      <div class="systems-grid">
+        <article class="card system-card">
+          <div class="card-head"><h3><i class="icon climate-icon" aria-hidden="true"></i>Cabin climate</h3></div>
+          <div class="climate-pair">
+            <div><span><i class="swatch lilac"></i>Interior</span><b id="inside"></b></div>
+            <div><span><i class="swatch ice"></i>Exterior</span><b id="outside"></b></div>
+          </div>
+          <div class="temp-axis" aria-hidden="true">
+            <i id="temp-inside"></i><i id="temp-outside"></i>
+          </div>
+          <div class="scale-labels"><span id="temp-low"></span><span id="temp-high"></span></div>
+          <dl class="compact-list" id="climate-detail"></dl>
+        </article>
+        <article class="card system-card">
+          <div class="card-head"><h3><i class="icon tyre-icon" aria-hidden="true"></i>Tyre pressure</h3></div>
+          <div class="wheel-layout">
+            <div class="wheel-reading"><span>Front left</span><b id="fl"></b></div>
+            <div class="chassis" aria-hidden="true"><i></i><em></em></div>
+            <div class="wheel-reading right"><span>Front right</span><b id="fr"></b></div>
+            <div class="wheel-reading"><span>Rear left</span><b id="rl"></b></div>
+            <div class="wheel-reading right"><span>Rear right</span><b id="rr"></b></div>
+          </div>
+          <dl class="compact-list" id="tyre-detail"></dl>
+        </article>
+        <article class="card system-card">
+          <div class="card-head"><h3><i class="icon state-icon" aria-hidden="true"></i>Vehicle state</h3></div>
+          <dl class="state-list" id="state-detail"></dl>
+          <button type="button" class="text-link" id="show-state">View vehicle signals <span aria-hidden="true">→</span></button>
+        </article>
+      </div>
+    </section>
+
+    <section id="signals" class="screen" hidden>
+      <article class="card signal-card">
+        <div class="explore-tools">
+          <label class="search-box"><span class="search-mark" aria-hidden="true"></span><input id="signal-search" type="search" aria-label="Search signals" placeholder="Find a signal or Tesla field"><kbd>/</kbd></label>
+          <label class="filter-label">System <select id="group-filter"><option value="">All systems</option></select></label>
+          <label class="check-label"><input id="present-only" type="checkbox">Available only</label>
+          <button id="export" type="button">Download JSON</button>
+        </div>
+        <p class="table-summary" id="signal-count" aria-live="polite"></p>
+        <div class="table-scroll"><table class="signals-table"><thead><tr><th>Signal</th><th>Reading</th><th>System</th><th>Block timestamp</th></tr></thead><tbody id="signal-body"></tbody></table></div>
+      </article>
+    </section>
+
+    <section id="history" class="screen" hidden>
+      <article class="card chart-card">
+        <div class="card-head"><h2>Reading trend</h2><div class="trend-controls"><label class="filter-label">Metric <select id="trend-metric">
+          <option value="charge_state.battery_level">Battery</option><option value="charge_state.charger_power">Charging power</option>
+          <option value="climate_state.inside_temp">Interior temperature</option><option value="vehicle_state.odometer">Odometer</option>
+        </select></label><label class="filter-label">Compare from <select id="baseline"><option>First reading</option></select></label></div></div>
+        <div class="trend-summary"><b id="trend-value"></b><p id="trend-change"></p></div>
+        <canvas id="trend-chart" role="img" aria-label="Readings over time; values also listed in the table below"></canvas>
+        <p id="trend-note" class="subtle"></p>
+      </article>
+      <div class="section-head"><h2>Recent reads</h2><span id="history-count" class="subtle"></span></div>
+      <article class="card table-scroll"><table><thead><tr><th>Read at</th><th>Source</th><th>Metric reported at</th><th id="hist-value-head">Reading</th></tr></thead><tbody id="history-body"></tbody></table></article>
+    </section>
+
+    <section id="connection" class="screen" hidden>
+      <div class="connection-grid">
+        <div>
+          <details class="card settings" id="credentialPanel" open><summary>Developer credentials</summary>
+            <form id="credentials" autocomplete="off">
+              <label for="cid">Client ID</label><input id="cid" required spellcheck="false">
+              <label for="secret">Client Secret</label><input id="secret" type="password" required>
+              <button class="primary">Use credentials for this session</button>
+              <button type="button" id="legacy">Run original partner connection test</button>
+              <p id="legacyResult" aria-live="polite"></p>
+            </form>
+          </details>
+          <article class="card settings"><h2>Personal authorization</h2>
+            <label for="redirect">Registered callback</label>
+            <select id="redirect"><option value="local">Local loopback</option><option value="hosted">Hosted HTTPS callback</option></select>
+            <p id="ownerStatus" aria-live="polite"></p>
+            <button id="signin" class="primary" disabled>Sign in with Tesla</button>
+            <button id="discover" disabled>Discover vehicles</button>
+          </article>
+          <details class="card settings"><summary>Application registration</summary>
+            <label for="domain">Public application domain</label><input id="domain" placeholder="Your application hostname">
+            <label for="existing">Existing OpenSSL public key (public-key.pem)</label><input type="file" id="existing" accept=".pem"><button id="useExisting">Use existing public key</button>
+            <label for="password">Local private-key passphrase (12+ characters)</label><input id="password" type="password" autocomplete="off">
+            <button id="key">Generate or open key pair</button><pre id="public"></pre><code id="path"></code>
+            <button data-op="hosted">Check hosted public key</button><button data-op="partner">Test partner authentication</button>
+            <button data-op="verify">Verify EU registration</button><button id="register">Register domain with Tesla Europe…</button>
+          </details>
+        </div>
+        <article class="card settings checklist"><h2>Connection checklist</h2><dl id="checks"></dl></article>
+      </div>
+    </section>
+  </fieldset>
+  <footer><span>Power House <b>/</b> EU Fleet API</span><span>Local · Read-only</span></footer>
+</main>
+<noscript>Enable JavaScript to use the local dashboard.</noscript>
+</body></html>

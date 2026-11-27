@@ -1,4 +1,4 @@
-# Power House v0.2
+# Power House
 
 ## Run locally
 
@@ -31,6 +31,16 @@ For the registered Power House deployment, startup loads the repository’s publ
 Select the callback you registered, click **Sign in with Tesla**, and complete consent on Tesla's website using the account that sees your Model 3 in the Tesla mobile app. Power House exchanges the code server-side and requests the vehicle list once. Select the car by name and masked VIN. **Read cached data** fetches the last snapshot Tesla holds and displays the timestamps Tesla supplies. **Read live data** makes an on-demand read when discovery reports the car online. If the car has since gone online, click **Discover vehicles** to update its status. Cached coverage varies by vehicle and firmware. A missing value displays as **Unavailable** and a reported zero retains its unit. [Tesla vehicle endpoints](https://developer.tesla.com/docs/fleet-api/endpoints/vehicle-endpoints)
 
 The process keeps credentials and rotating owner tokens in memory. It refreshes on demand and stopping Python clears the session. There is no database, scheduled polling, wake-up request or vehicle command. Vehicle reads can incur Fleet API charges. The local connection checklist shows the last result of each attempted step. If Tesla returns an empty personal list, verify the account in the mobile app, its vehicle access and Vehicle Information consent. A partner token and an empty partner list alone establish only developer access. [Tesla FAQ](https://developer.tesla.com/docs/fleet-api/support/faq)
+
+## Vehicle dashboard
+
+**Overview** shows the selected vehicle's last successful read, its source and Tesla's block timestamps. The instruments cover battery, charging, climate, tyres and equipment state. The cabin temperature difference and tyre pressure spread are calculated from the displayed measurements. Estimated, rated and ideal range are separate Tesla signals. The Model 3 artwork is an illustration.
+
+**Signals** lists supported operational fields that Tesla included, plus the core instruments even when unavailable. Press **/** to search by label or API field name. **Download JSON** exports the selected snapshot with its original units and masked VIN. The metric/imperial switch changes display units locally.
+
+**Read history** keeps up to 32 successful manual reads per vehicle in the running Python session. Select a metric and a baseline to compare readings. Chart positions use the corresponding Tesla block timestamp. Repeated cached timestamps occupy one chart point. The table includes each successful request and its read time.
+
+Opening dashboard tabs, filtering, comparing readings and changing units use the existing snapshot. The two read buttons each request one snapshot (apart from an authentication retry if a token expires). Signing in initiates vehicle discovery. The dashboard and its assets are served on loopback; the Cloudflare build publishes only the public key and OAuth callback.
 
 ## Verification
 

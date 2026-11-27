@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Power House v0.2: local, read-only Tesla Fleet API connection tester.
+"""Power House: local, read-only Tesla Fleet API dashboard.
 Run with Python 3. Key generation uses OpenSSL.
 """
 import argparse
@@ -8,7 +8,7 @@ import re
 import secrets
 import threading
 import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 from urllib.parse import urlencode, urlsplit, parse_qs
@@ -28,6 +28,12 @@ class NoRedirect(HTTPRedirectHandler):
 
 http = build_opener(NoRedirect)
 ROOT = Path(__file__).resolve().parent
+SESSION_LOCK = threading.Lock()
+ASSETS = {
+    '/dashboard/dashboard.css': 'text/css; charset=utf-8',
+    '/dashboard/dashboard.js': 'text/javascript; charset=utf-8',
+    '/dashboard/model-3.webp': 'image/webp',
+}
 
 
 def request_json(url, data=None, token=None, json_body=False):
@@ -111,7 +117,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
-        self.send_header('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'")
+        self.send_header('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'")
         self.end_headers()
         self.wfile.write(content)
 
@@ -127,7 +133,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(400, b'Invalid path', 'text/plain')
         if path.path == '/oauth/callback':
             try:
-                app.callback(parse_qs(path.query, keep_blank_values=True, max_num_fields=12))
+                with SESSION_LOCK:
+                    app.callback(parse_qs(path.query, keep_blank_values=True, max_num_fields=12))
             except ValueError:
                 return self.reply(400, b'Invalid or expired callback. Start sign-in again.', 'text/plain')
             self.send_response(303)
@@ -136,6 +143,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Cache-Control', 'no-store')
             self.end_headers()
             return
+        if self.path in ASSETS:
+            asset = ROOT / self.path.lstrip('/')
+            return self.reply(200, asset.read_bytes(), ASSETS[self.path])
+        if self.path == '/favicon.ico':
+            return self.reply(204, b'', 'image/x-icon')
         if self.path != '/':
             return self.reply(404, b'Not found', 'text/plain')
         page = (ROOT / 'power_house.html').read_text(encoding='utf8')
@@ -154,8 +166,9 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ValueError()
             if self.path == '/action':
-                result = app.action(data)
-                return self.reply(200, json.dumps(result).encode(), 'application/json')
+                with SESSION_LOCK:
+                    payload = json.dumps(app.action(data), allow_nan=False).encode()
+                return self.reply(200, payload, 'application/json')
             client_id, secret = data['client_id'], data['secret']
             if not all(isinstance(v, str) and 0 < len(v) <= 4096 for v in (client_id, secret)):
                 raise ValueError()
@@ -178,7 +191,7 @@ def new_session():
 app = new_session()
 
 
-class PowerHouseServer(HTTPServer):
+class PowerHouseServer(ThreadingHTTPServer):
     allow_reuse_address = False
     allow_reuse_port = False
 
